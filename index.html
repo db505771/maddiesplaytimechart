@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Playtime Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      background-color: #000000;
+      color: white;
+      font-family: 'Segoe UI', sans-serif;
+      margin: 0;
+      padding: 0;
+      text-align: center;
+      overflow-x: hidden;
+    }
+
+    .totals {
+      padding: 20px 10px 10px;
+    }
+
+    .totals h2 {
+      margin: 0;
+      font-size: 22px;
+    }
+
+    .totals p {
+      margin-top: 6px;
+      color: #ccc;
+      font-size: 16px;
+    }
+
+    #chart-container {
+      width: 90%;
+      max-width: 400px;
+      margin: 0 auto;
+    }
+
+    #chart {
+      width: 100%;
+      height: auto;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="totals">
+    <h2 id="chart-title">Total Time</h2>
+    <p id="total-time">Loading...</p>
+  </div>
+  <div id="chart-container">
+    <canvas id="chart" height="180"></canvas>
+  </div>
+
+  <script>
+    const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRo-SarpignS39lDSaIGsV13WyUJOURcyVaRP_mEqY6XfBxby9WA_XCf5AhXi8OcwHDiP4FLqBwMGKw/pub?output=csv";
+    let chartMode = 0; // 0 = total, 1 = monthly, 2 = weekly
+    let chart;
+
+    function formatTime(mins) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return `${h}h ${m}m`;
+    }
+    async function fetchCSV(url) {
+      const res = await fetch(url);
+      const text = await res.text();
+      return text.trim().split("\n").slice(1).map(row => row.split(","));
+    }
+
+    function getMonthLabelsUpToCurrent() {
+      const now = new Date();
+      const labels = [];
+      for (let i = 0; i <= now.getMonth(); i++) {
+        labels.push(new Date(0, i).toLocaleString('default', {
+          month: 'short'
+        }));
+      }
+      return labels;
+    }
+
+    function getLast7Days() {
+      const list = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        d.setHours(0, 0, 0, 0);
+        list.push(d);
+      }
+      return list;
+    }
+    async function updateView(rows) {
+      const now = new Date();
+      let labels = [];
+      let data = [];
+      let totalMinutesForText = 0;
+      if (chartMode === 0) {
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const h = parseInt(rows[i][2]);
+          const m = parseInt(rows[i][3]);
+          if (!isNaN(h) && !isNaN(m)) {
+            totalMinutesForText = h * 60 + m;
+            break;
+          }
+        }
+        const last7 = getLast7Days();
+        labels = last7.map(d => d.toLocaleDateString("default", {
+          month: "short",
+          day: "numeric"
+        }));
+        const dateMap = {};
+        last7.forEach(d => dateMap[d.toISOString().slice(0, 10)] = 0);
+        for (const row of rows) {
+          const date = new Date(row[0]);
+          const key = date.toISOString().slice(0, 10);
+          const mins = parseInt(row[4]);
+          if (dateMap.hasOwnProperty(key) && !isNaN(mins)) {
+            dateMap[key] += mins;
+          }
+        }
+        data = last7.map(d => dateMap[d.toISOString().slice(0, 10)] || 0);
+        document.getElementById("chart-title").textContent = "Total Time";
+      } else if (chartMode === 1) {
+        labels = getMonthLabelsUpToCurrent();
+        const monthMap = {};
+        for (let i = 0; i < labels.length; i++) monthMap[i] = 0;
+        for (const row of rows) {
+          const date = new Date(row[0]);
+          const mins = parseInt(row[4]);
+          if (!isNaN(mins) && date.getFullYear() === now.getFullYear()) {
+            const m = date.getMonth();
+            monthMap[m] += mins;
+          }
+        }
+        data = Object.values(monthMap);
+        totalMinutesForText = 0;
+        for (const row of rows) {
+          const d = new Date(row[0]);
+          const mins = parseInt(row[4]);
+          if (!isNaN(mins) && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()) {
+            totalMinutesForText += mins;
+          }
+        }
+        document.getElementById("chart-title").textContent = "Monthly Playtime";
+      } else if (chartMode === 2) {
+        const last7 = getLast7Days();
+        labels = last7.map(d => d.toLocaleDateString("default", {
+          month: "short",
+          day: "numeric"
+        }));
+        const dateMap = {};
+        last7.forEach(d => dateMap[d.toISOString().slice(0, 10)] = 0);
+        for (const row of rows) {
+          const date = new Date(row[0]);
+          const key = date.toISOString().slice(0, 10);
+          const mins = parseInt(row[4]);
+          if (dateMap.hasOwnProperty(key) && !isNaN(mins)) {
+            dateMap[key] += mins;
+          }
+        }
+        data = last7.map(d => dateMap[d.toISOString().slice(0, 10)] || 0);
+        totalMinutesForText = data.reduce((a, b) => a + b, 0);
+        document.getElementById("chart-title").textContent = "Weekly Time";
+      }
+      document.getElementById("total-time").textContent = formatTime(totalMinutesForText);
+      const ctx = document.getElementById("chart").getContext("2d");
+      if (chart) chart.destroy();
+      const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+      gradient.addColorStop(0, "rgba(255, 255, 255, 0.4)");
+      gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+      chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            data,
+            label: "Minutes Played",
+            borderColor: "white",
+            backgroundColor: gradient,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 3,
+            borderWidth: 1.5,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: false
+            }
+          },
+          layout: {
+            padding: {
+              top: 10,
+              bottom: 10
+            }
+          },
+          scales: {
+            x: {
+              ticks: {
+                color: "white",
+                font: {
+                  size: 10
+                }
+              },
+              grid: {
+                display: false
+              }
+            },
+            y: {
+              display: false,
+              ticks: {
+                display: false
+              },
+              grid: {
+                display: false
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function setupSwipe(rows) {
+      let startX = 0;
+      document.body.addEventListener("touchstart", e => {
+        startX = e.touches[0].clientX;
+      });
+      document.body.addEventListener("touchend", e => {
+        const deltaX = e.changedTouches[0].clientX - startX;
+        if (Math.abs(deltaX) > 50) {
+          if (deltaX < 0) {
+            chartMode = (chartMode + 1) % 3;
+          } else {
+            chartMode = (chartMode + 2) % 3;
+          }
+          updateView(rows);
+        }
+      });
+    }
+    async function init() {
+      const rows = await fetchCSV(csvUrl);
+      setupSwipe(rows);
+      updateView(rows);
+    }
+    init();
+  </script>
+</body>
+
+</html>
